@@ -441,7 +441,7 @@ function canAct(){
   if(!sess) return false;
   if(!CU) return false;
   if(CU.isAdmin) return true; // admin can always act
-  return sess.playerIds.includes(CU.id);
+  return sess.playerIds.indexOf(CU.id)!==-1;
 }
 function requireAct(){
   if(!canAct()){ toast('Nur Abend-Teilnehmer dürfen das!'); return false; } return true;
@@ -1141,7 +1141,7 @@ function showSummary(sessId){
   });
   zs.forEach(function(z){ z.verliererIds.forEach(function(id){ if(tally[id]) tally[id].zpen+=z.betrag; }); });
 
-  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.includes(p.id); });
+  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.indexOf(p.id)!==-1; });
   var absAmt=0;
   if(done.length){
     var pens=done.slice(0,3).map(function(g){ return g.penalty||0; });
@@ -1221,7 +1221,8 @@ function renderStatistik(){
   var ps=DB.players.slice().sort(function(a,b){ return (b.wins||0)-(a.wins||0); });
   var tc={};
   DB.sessions.forEach(function(s){ s.games.forEach(function(g){ (g.rounds||[]).forEach(function(r){ if(r.trumpf) tc[r.trumpf]=(tc[r.trumpf]||0)+1; }); }); });
-  var ttotal=Object.values(tc).reduce(function(a,b){ return a+b; },1);
+  var ttotal=1;
+  for(var _k in tc){ if(tc.hasOwnProperty(_k)) ttotal+=tc[_k]; }
 
   var html='<div class="slabel">Übersicht</div>'
     +'<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:7px;padding:0 1rem .5rem">'
@@ -1245,13 +1246,16 @@ function renderStatistik(){
   });
   html+='</div>';
 
-  if(Object.keys(tc).length){
+  var _tcLen=0; for(var _k2 in tc){ if(tc.hasOwnProperty(_k2)) _tcLen++; }
+  if(_tcLen){
     html+='<div class="slabel">Lieblingstrümpfe</div><div class="card" style="padding:.7rem 1.1rem">';
-    Object.entries(tc).sort(function(a,b){ return b[1]-a[1]; }).forEach(function(e){
+    var _tcArr=[]; for(var _k3 in tc){ if(tc.hasOwnProperty(_k3)) _tcArr.push([_k3,tc[_k3]]); }
+    _tcArr.sort(function(a,b){ return b[1]-a[1]; });
+    _tcArr.forEach(function(e){
       var t=TRUMPF.find(function(x){ return x.id===e[0]; });
       var pct=Math.round(e[1]/ttotal*100);
       html+='<div style="display:flex;align-items:center;gap:7px;margin-bottom:7px">'
-        +'<span style="width:20px;height:20px;flex-shrink:0">'+(t?t.svg.replace('viewBox="0 0 40 40"','viewBox="0 0 40 40" width="20" height="20"'):'')+'</span>'
+        +(t?(t.img?'<img src="'+t.img+'" style="width:20px;height:20px;object-fit:contain;border-radius:2px;flex-shrink:0">':'<span style="width:20px;height:20px;flex-shrink:0">'+t.svg.replace('viewBox="0 0 40 40"','viewBox="0 0 40 40" width="20" height="20"')+'</span>'):'<span style="width:20px;height:20px"></span>')
         +'<span style="font-size:12px;min-width:55px">'+(t?t.label:e[0])+'</span>'
         +'<div class="prog" style="flex:1;margin:0"><div class="prog-f" style="width:'+pct+'%"></div></div>'
         +'<span style="font-size:11px;color:var(--ink3)">'+e[1]+'×</span></div>';
@@ -1269,7 +1273,7 @@ function tagesablZeigen(){
   var sess=getSess(); if(!sess) return;
   var done=sess.games.filter(function(g){ return g.winner; });
   var zs=sess.zusatzspiele||[];
-  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.includes(p.id); });
+  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.indexOf(p.id)!==-1; });
   var absAmt=0;
   if(done.length){ var pens=done.slice(0,3).map(function(g){ return g.penalty||0; }); absAmt=Math.round(pens.reduce(function(a,b){ return a+b; },0)/pens.length); }
 
@@ -1313,7 +1317,7 @@ function tagAbschliessen(){
   var sess=getSess(); if(!sess) return;
   if(getAG()){ toast('Erst aktives Spiel beenden!'); return; }
   var done=sess.games.filter(function(g){ return g.winner; });
-  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.includes(p.id); });
+  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.indexOf(p.id)!==-1; });
   if(done.length>=1){
     var pens=done.slice(0,3).map(function(g){ return g.penalty||0; });
     var absAmt=Math.round(pens.reduce(function(a,b){ return a+b; },0)/pens.length);
@@ -1362,10 +1366,12 @@ function resetPin(playerId){
 function renderVerwaltung(){
   var el=document.getElementById('verwaltung-content');
   if(!CU||!CU.isAdmin){
+    var _cuP=getP(CU?CU.id:'');
+    var _cuAv=_cuP?av(_cuP.name,_cuP.color):'';
     el.innerHTML='<div class="slabel">Mein Account</div>'
       +'<div class="card" style="padding:.7rem 1.1rem">'
       +'<div style="display:flex;align-items:center;gap:10px;margin-bottom:.75rem">'
-      + (function(){ var p=getP(CU?CU.id:''); return p?av(p.name,p.color):''; })()
+      +_cuAv
       +'<div style="font-size:15px;font-weight:500">'+(CU?CU.name:'')+'</div></div>'
       +'<button class="btn bprim bblk" onclick="openPinModal()">🔐 PIN ändern</button>'
       +'</div>';
