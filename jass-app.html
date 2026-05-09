@@ -556,7 +556,7 @@ let pts1touched = false, pts2touched = false;
 function pid()   { return '_' + Math.random().toString(36).substr(2,9); }
 function today() { return new Date().toLocaleDateString('de-AT',{day:'2-digit',month:'2-digit',year:'numeric'}); }
 function now()   { return new Date().toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit'}); }
-function getSess(){ return DB.sessions.find(function(s){ return s.date===today()&&!s.closed; })||null; }
+function getSess(){ if(!DB||!DB.sessions) return null; return DB.sessions.find(function(s){ return s.date===today()&&!s.closed; })||null; }
 function canAct(){
   // Any logged-in player who is listed in tonight's session may act
   var sess=getSess();
@@ -568,8 +568,8 @@ function canAct(){
 function requireAct(){
   if(!canAct()){ toast('Nur Abend-Teilnehmer dürfen das!'); return false; } return true;
 }
-function getAG()  { var s=getSess(); return s?(s.games.find(function(g){ return !g.winner; })||null):null; }
-function getP(id) { return DB.players.find(function(p){ return p.id===id; }); }
+function getAG()  { var s=getSess(); return s?((s.games||[]).find(function(g){ return !g.winner; })||null):null; }
+function getP(id) { if(!DB||!DB.players) return null; return DB.players.find(function(p){ return p.id===id; }); }
 function ini(name){ return (name||'?').substring(0,2).toUpperCase(); }
 
 function av(name,color,small){
@@ -598,7 +598,7 @@ function refreshCG(gid){
     pids.forEach(function(pid){
       var p=getP(pid); if(!p) return;
       var sel=CS[gid]&&CS[gid].has(pid);
-      var dis=disabled.includes(pid);
+      var dis=disabled.indexOf(pid)!==-1;
       html+='<div class="chip'+(sel?' sel':'')+(dis?' dis':'')+'" onclick="togCG(\''+gid+'\',\''+pid+'\')">'
         +av(p.name,p.color,true)+' '+p.name+'</div>';
     });
@@ -622,6 +622,7 @@ function closeModal(id){ document.getElementById(id).classList.remove('open'); p
 // ═══════════════════════════════════════════════════════════════════
 function renderLogin(){
   if(!DB) return;
+  document.getElementById('pin-sub').textContent='Wer bisch du?';
   var el=document.getElementById('login-chips');
   if(!DB.players.length){ el.innerHTML='<p style="color:var(--ink3);font-size:13px">Keine Spieler. Admin-Zugang nutzen.</p>'; return; }
   var h='';
@@ -694,9 +695,9 @@ function checkPin(){
 // ═══════════════════════════════════════════════════════════════════
 function initApp(){
   if(!DB) return;
-  lastKnownVersion = JSON.stringify(DB); // set baseline so first poll doesn't re-render
+  lastSeenTs = DB._ts || 0; // set baseline so first poll doesn't re-render
   renderAll();
-  if(!getSess()&&CU&&CU.isAdmin) openSessModal();
+  if(!getSess()&&CU) openSessModal();
 }
 function nav(s){
   document.querySelectorAll('.screen').forEach(function(x){ x.classList.remove('active'); });
@@ -1426,6 +1427,7 @@ function renderStatistik(){
 // TAGESABSCHLUSS
 // ═══════════════════════════════════════════════════════════════════
 function tagesablZeigen(){
+  if(!DB) return;
   if(!requireAct()) return;
   var sess=getSess(); if(!sess) return;
   var done=sess.games.filter(function(g){ return g.winner; });
@@ -1471,6 +1473,7 @@ function tagesablZeigen(){
 }
 
 function tagAbschliessen(){
+  if(!DB) return;
   var sess=getSess(); if(!sess) return;
   if(getAG()){ toast('Erst aktives Spiel beenden!'); return; }
   var done=sess.games.filter(function(g){ return g.winner; });
