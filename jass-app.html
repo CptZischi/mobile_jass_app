@@ -447,96 +447,122 @@ const DEF_PLAYERS = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════
-// DATABASE – Firebase Realtime Database
+// DATABASE – Firebase Realtime Database (iOS-safe, callback-based)
 // ═══════════════════════════════════════════════════════════════════
-const FB_URL  = 'https://jasser-app-default-rtdb.europe-west1.firebasedatabase.app';
-const FB_DATA = '/jass_db.json';
-const FB_TS   = '/jass_ts.json';   // tiny timestamp-only node for cheap polling
-let DB = null;
-var pollPaused    = false;
-var lastSeenTs    = 0;   // timestamp of last data we processed
-var ownWriteTs    = 0;   // timestamp we wrote ourselves (skip re-render)
-var syncPollRunning = false;
+var FB_URL  = 'https://jasser-app-default-rtdb.europe-west1.firebasedatabase.app';
+var FB_DATA = '/jass_db.json';
+var FB_TS   = '/jass_ts.json';
+var DB           = null;
+var pollPaused   = false;
+var lastSeenTs   = 0;
+var syncRunning  = false;
 
-// ── Read full DB from Firebase ────────────────────────────────────
-async function loadDB() {
-  try {
-    var r = await fetch(FB_URL + FB_DATA + '?t=' + Date.now()); // bust cache
-    if (r.ok) {
-      var data = await r.json();
-      if (data && data.players && data.players.length > 0) {
-        DB = data;
-        lastSeenTs = data._ts || 0;
-        localStorage.setItem('jass_cache', JSON.stringify(DB));
-        return;
-      }
-    }
-  } catch(e) { console.warn('Firebase load failed, using cache:', e); }
-  // Fallback: local cache
-  var cache = localStorage.getItem('jass_cache');
-  if (cache) { try { DB = JSON.parse(cache); } catch(e) {} }
-  if (!DB || !DB.players || DB.players.length === 0) {
-    DB = {players: JSON.parse(JSON.stringify(DEF_PLAYERS)), sessions: [], zahlungen: []};
-  }
-  if (!DB.zahlungen) DB.zahlungen = [];
+// ── iOS-safe XHR wrapper (no async/await) ────────────────────────
+function xhrGet(url, cb) {
+  var x = new XMLHttpRequest();
+  x.open('GET', url + '?nc=' + Date.now(), true);
+  x.setRequestHeader('Cache-Control', 'no-cache, no-store');
+  x.onreadystatechange = function() {
+    if (x.readyState !== 4) return;
+    if (x.status === 200) { cb(null, x.responseText); }
+    else { cb('HTTP ' + x.status, null); }
+  };
+  x.onerror = function() { cb('network error', null); };
+  x.send();
 }
 
-// ── Write to Firebase ─────────────────────────────────────────────
-async function save() {
+function xhrPut(url, body, cb) {
+  var x = new XMLHttpRequest();
+  x.open('PUT', url, true);
+  x.setRequestHeader('Content-Type', 'application/json');
+  x.onreadystatechange = function() {
+    if (x.readyState !== 4) return;
+    if (cb) cb(x.status === 200 ? null : 'HTTP ' + x.status);
+  };
+  x.onerror = function() { if (cb) cb('network error'); };
+  x.send(body);
+}
+
+// ── Sanitize loaded DB ────────────────────────────────────────────
+function sanitizeDB(data) {
+  if (!data || typeof data !== 'object') return false;
+  if (!data.players || !data.players.length) return false;
+  if (!data.sessions) data.sessions = [];
+  if (!data.zahlungen) data.zahlungen = [];
+  return true;
+}
+
+// ── Load DB: Firebase first, localStorage fallback ────────────────
+function loadDB(cb) {
+  xhrGet(FB_URL + FB_DATA, function(err, text) {
+    if (!err && text) {
+      try {
+        var data = JSON.parse(text);
+        if (sanitizeDB(data)) {
+          DB = data;
+          lastSeenTs = data._ts || 0;
+          try { localStorage.setItem('jass_cache', text); } catch(e) {}
+          cb();
+          return;
+        }
+      } catch(e) {}
+    }
+    // Fallback: localStorage
+    var cached = null;
+    try { cached = localStorage.getItem('jass_cache'); } catch(e) {}
+    if (cached) {
+      try {
+        var d = JSON.parse(cached);
+        if (sanitizeDB(d)) { DB = d; lastSeenTs = d._ts || 0; cb(); return; }
+      } catch(e) {}
+    }
+    // Last resort: defaults
+    DB = {players: JSON.parse(JSON.stringify(DEF_PLAYERS)), sessions: [], zahlungen: []};
+    cb();
+  });
+}
+
+// ── Save: local first (instant UI), then Firebase ─────────────────
+function save() {
   if (!DB) return;
-  DB._ts = Date.now();          // stamp every write
-  ownWriteTs = DB._ts;          // remember so poll skips our own write
+  DB._ts = Date.now();
   lastSeenTs = DB._ts;
   var json = JSON.stringify(DB);
-  localStorage.setItem('jass_cache', json);
-  try {
-    // Write data + update tiny timestamp node in parallel
-    await Promise.all([
-      fetch(FB_URL + FB_DATA, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: json
-      }),
-      fetch(FB_URL + FB_TS, {
-        method: 'PUT',
-        headers: {'Content-Type': 'application/json'},
-        body: String(DB._ts)
-      })
-    ]);
-  } catch(e) { console.warn('Firebase write failed:', e); }
+  try { localStorage.setItem('jass_cache', json); } catch(e) {}
+  xhrPut(FB_URL + FB_DATA, json, function(err) {
+    if (err) console.warn('Firebase write error:', err);
+  });
+  xhrPut(FB_URL + FB_TS, String(DB._ts), null);
 }
 
-// ── Live sync: poll timestamp every 3 s, fetch full data only on change ──
-async function pollRemote() {
-  if (pollPaused || !CU || !DB || syncPollRunning) return;
-  syncPollRunning = true;
-  try {
-    // 1. Fetch only the tiny timestamp node (very cheap)
-    var tr = await fetch(FB_URL + FB_TS + '?t=' + Date.now());
-    if (!tr.ok) { syncPollRunning = false; return; }
-    var remoteTs = parseInt(await tr.text()) || 0;
-
-    // 2. Only fetch full data if timestamp is newer than what we last processed
-    if (remoteTs > lastSeenTs) {
-      var dr = await fetch(FB_URL + FB_DATA + '?t=' + Date.now());
-      if (!dr.ok) { syncPollRunning = false; return; }
-      var data = await dr.json();
-      if (data && data.players && data._ts && data._ts > lastSeenTs) {
-        lastSeenTs = data._ts;
+// ── Poll: check timestamp node, load full data only when changed ──
+function pollRemote() {
+  if (pollPaused || !CU || !DB || syncRunning) return;
+  syncRunning = true;
+  xhrGet(FB_URL + FB_TS, function(err, text) {
+    if (err) { syncRunning = false; return; }
+    var remoteTs = parseInt(text) || 0;
+    if (remoteTs <= lastSeenTs) { syncRunning = false; return; }
+    // Timestamp changed — fetch full data
+    xhrGet(FB_URL + FB_DATA, function(err2, text2) {
+      syncRunning = false;
+      if (err2 || !text2) return;
+      try {
+        var data = JSON.parse(text2);
+        if (!sanitizeDB(data)) return;
+        if ((data._ts || 0) <= lastSeenTs) return;
         DB = data;
-        if (!DB.zahlungen) DB.zahlungen = [];
-        localStorage.setItem('jass_cache', JSON.stringify(DB));
-        // Re-render active screen (not if a modal is open)
+        lastSeenTs = data._ts;
+        try { localStorage.setItem('jass_cache', text2); } catch(e) {}
         if (!pollPaused) {
           var active = document.querySelector('.screen.active');
           var sid = active ? active.id.replace('screen-','') : 'session';
           renderScreen(sid);
           showSyncPulse();
         }
-      }
-    }
-  } catch(e) {}
-  syncPollRunning = false;
+      } catch(e) {}
+    });
+  });
 }
 
 function showSyncPulse() {
@@ -1723,16 +1749,22 @@ function renderKasse() {
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// BOOT
+// BOOT – iOS-safe: use DOMContentLoaded + XHR callback, no async/await
 // ═══════════════════════════════════════════════════════════════════
-(async function() {
-  // Show loading indicator while fetching from Firebase
-  document.getElementById('pin-sub').textContent = 'Verbinde mit Server…';
-  await loadDB();
-  renderLogin();
-  // Poll every 3 seconds for live sync
-  setInterval(pollRemote, 3000);
-})();
+function boot() {
+  var sub = document.getElementById('pin-sub');
+  if (sub) sub.textContent = 'Verbinde mit Server…';
+  loadDB(function() {
+    renderLogin();
+    setInterval(pollRemote, 3000);
+  });
+}
+
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
+}
 </script>
 </body>
 </html>
