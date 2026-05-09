@@ -580,15 +580,27 @@ let pts1touched = false, pts2touched = false;
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════
 function pid()   { return '_' + Math.random().toString(36).substr(2,9); }
-function today() { return new Date().toLocaleDateString('de-AT',{day:'2-digit',month:'2-digit',year:'numeric'}); }
-function now()   { return new Date().toLocaleTimeString('de-AT',{hour:'2-digit',minute:'2-digit'}); }
-function getSess(){ if(!DB||!DB.sessions) return null; return DB.sessions.find(function(s){ return s.date===today()&&!s.closed; })||null; }
+function today() {
+  var d=new Date();
+  var dd=String(d.getDate()).padStart(2,'0');
+  var mm=String(d.getMonth()+1).padStart(2,'0');
+  var yyyy=d.getFullYear();
+  return dd+'.'+mm+'.'+yyyy;
+}
+function now() {
+  var d=new Date();
+  return String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+}
+function getSess(){
+  if(!DB||!DB.sessions) return null;
+  var t=today();
+  return DB.sessions.find(function(s){ return s.date===t&&!s.closed; })||null;
+}
 function canAct(){
-  // Any logged-in player who is listed in tonight's session may act
+  if(!CU) return false;
   var sess=getSess();
   if(!sess) return false;
-  if(!CU) return false;
-  if(CU.isAdmin) return true; // admin can always act
+  if(CU.isAdmin) return true;
   return sess.playerIds.indexOf(CU.id)!==-1;
 }
 function requireAct(){
@@ -1259,10 +1271,8 @@ function renderVerlauf(){
   if(!sessions.length){ el.innerHTML='<div class="empty"><div class="icon">📋</div><p>Noch keine Spiele</p></div>'; return; }
   var html='';
   sessions.forEach(function(sess){
-    var done=sess.games.filter(function(g){ return g.winner; });
+    var done=(sess.games||[]).filter(function(g){ return g.winner; });
     var zs=sess.zusatzspiele||[];
-    var hasContent=done.length||zs.length;
-    if(!hasContent) return;
 
     html+='<div style="display:flex;justify-content:space-between;align-items:center;padding:.85rem 1.2rem .25rem">'
       +'<div class="slabel" style="padding:0">'+sess.date+(sess.location?' · 📍 '+sess.location:'')+'</div>'
