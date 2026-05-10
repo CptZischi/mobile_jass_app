@@ -191,9 +191,13 @@ textarea{resize:vertical;min-height:60px}
   <div class="screen" id="screen-verwaltung"><div class="ptitle">Verwaltung</div><div id="verwaltung-content"></div></div>
   <div class="screen" id="screen-kasse"><div class="ptitle">Kasse</div><div id="kasse-content"></div></div>
 
-  <div style="position:fixed;top:8px;right:10px;z-index:100;pointer-events:none">
-  <div id="sync-dot" style="width:8px;height:8px;border-radius:50%;background:var(--green);opacity:0;transition:opacity .4s"></div>
-</div>
+  <div style="position:fixed;top:10px;right:10px;z-index:100;display:flex;align-items:center;gap:6px;pointer-events:none">
+    <div id="user-badge" style="display:none;align-items:center;gap:5px;background:var(--card);border:1px solid var(--border);border-radius:20px;padding:3px 9px 3px 4px;box-shadow:0 1px 4px rgba(0,0,0,.08)">
+      <div id="user-badge-av" style="width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:9px;font-weight:600;font-family:var(--fd)"></div>
+      <span id="user-badge-name" style="font-size:12px;font-weight:500;color:var(--ink);font-family:var(--ff-b)"></span>
+    </div>
+    <div id="sync-dot" style="width:7px;height:7px;border-radius:50%;background:var(--green);opacity:0;transition:opacity .4s"></div>
+  </div>
 <nav class="bnav">
     <button class="ni active" onclick="nav('session')" id="nav-session">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>Heute
@@ -579,6 +583,21 @@ let pts1touched = false, pts2touched = false;
 // ═══════════════════════════════════════════════════════════════════
 // HELPERS
 // ═══════════════════════════════════════════════════════════════════
+function updateUserBadge(){
+  var badge=document.getElementById('user-badge');
+  var avEl=document.getElementById('user-badge-av');
+  var nameEl=document.getElementById('user-badge-name');
+  if(!badge||!avEl||!nameEl) return;
+  if(!CU){ badge.style.display='none'; return; }
+  var p=getP(CU.id);
+  var color=p?p.color:'#888';
+  var name=CU.name;
+  avEl.style.background=color+'22';
+  avEl.style.color=color;
+  avEl.textContent=name.substring(0,2).toUpperCase();
+  nameEl.textContent=name;
+  badge.style.display='flex';
+}
 function pid()   { return '_' + Math.random().toString(36).substr(2,9); }
 function today() {
   var d=new Date();
@@ -712,6 +731,7 @@ function checkPin(){
   if(ok){
     document.getElementById('pin-screen').style.display='none';
     document.getElementById('main-app').style.display='flex';
+    updateUserBadge();
     initApp();
     // Force PIN change if reset by admin
     var loggedP=getP(CU.id);
@@ -1107,17 +1127,27 @@ function openRundeModal(){
     +'<div class="field"><label>Stiche '+t2n+'</label><input type="number" id="pts2" value="" min="0" max="157" placeholder="0" oninput="onP2()"></div>'
     +'</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:9px">'
-    +'<div class="field"><label>Weis '+t1n+'</label><input type="number" id="weis1" value="0" min="0"></div>'
-    +'<div class="field"><label>Weis '+t2n+'</label><input type="number" id="weis2" value="0" min="0"></div>'
+    +'<div class="field"><label>Weis '+t1n+'</label><input type="number" id="weis1" value="" min="0" placeholder="0"></div>'
+    +'<div class="field"><label>Weis '+t2n+'</label><input type="number" id="weis2" value="" min="0" placeholder="0"></div>'
     +'</div>'
-    +'<div class="field"><label>Matsch?</label><select id="matsch">'
+    +'<div class="field"><label>Matsch?</label><select id="matsch" onchange="checkMatsch()">'
     +'<option value="">Kein Matsch</option>'
     +'<option value="1">Team 1 ('+t1n+') +100</option>'
     +'<option value="2">Team 2 ('+t2n+') +100</option>'
-    +'</select></div>';
+    +'</select></div>'
+    +'<div id="matsch-warn" style="font-size:12px;color:var(--red);display:none;padding:.3rem 0">⚠ Matsch nur möglich wenn das Team 157 Punkte hat</div>';
   openModal('modal-runde');
 }
 
+function checkMatsch(){
+  var mat=document.getElementById('matsch'); if(!mat) return;
+  var warn=document.getElementById('matsch-warn');
+  var v=mat.value;
+  if(!v){ if(warn) warn.style.display='none'; return; }
+  var pts=(v==='1')?parseInt(document.getElementById('pts1').value||0):parseInt(document.getElementById('pts2').value||0);
+  var ok=(pts===157);
+  if(warn) warn.style.display=ok?'none':'block';
+}
 function doSelTrumpf(id){
   document.querySelectorAll('.tbtn').forEach(function(b){ b.classList.remove('sel'); });
   var btn=document.getElementById('tb-'+id); if(btn) btn.classList.add('sel');
@@ -1125,17 +1155,21 @@ function doSelTrumpf(id){
 }
 function onP1(){
   pts1touched=true;
+  clamp('pts1');
   var v=parseInt(document.getElementById('pts1').value);
-  if(!isNaN(v)&&v>=0&&v<=157&&!pts2touched) document.getElementById('pts2').value=157-v;
-  clamp('pts1'); clamp('pts2');
+  if(!isNaN(v)&&v>=0&&v<=157&&!pts2touched){
+    document.getElementById('pts2').value=157-v;
+  }
 }
 function onP2(){
   pts2touched=true;
+  clamp('pts2');
   var v=parseInt(document.getElementById('pts2').value);
-  if(!isNaN(v)&&v>=0&&v<=157&&!pts1touched) document.getElementById('pts1').value=157-v;
-  clamp('pts1'); clamp('pts2');
+  if(!isNaN(v)&&v>=0&&v<=157&&!pts1touched){
+    document.getElementById('pts1').value=157-v;
+  }
 }
-function clamp(id){ var e=document.getElementById(id); if(e&&parseInt(e.value)<0) e.value=0; }
+function clamp(id){ var e=document.getElementById(id); if(!e) return; var v=parseInt(e.value); if(!isNaN(v)&&v<0) e.value=0; if(!isNaN(v)&&v>157) e.value=157; }
 
 function rundeEintragen(){
   if(!requireAct()) return;
@@ -1146,6 +1180,8 @@ function rundeEintragen(){
   var w1=Math.max(0,parseInt(document.getElementById('weis1').value)||0);
   var w2=Math.max(0,parseInt(document.getElementById('weis2').value)||0);
   var mat=document.getElementById('matsch').value;
+  if(mat==='1'&&p1!==157){ toast('Matsch nur wenn Team 1 exakt 157 Punkte hat!'); return; }
+  if(mat==='2'&&p2!==157){ toast('Matsch nur wenn Team 2 exakt 157 Punkte hat!'); return; }
   var t1=p1+w1+(mat==='1'?100:0), t2=p2+w2+(mat==='2'?100:0);
   var schreiber=CU?CU.name:'?';
   g.rounds.push({trumpf:selTrumpf,pts1:p1,pts2:p2,w1:w1,w2:w2,matsch:mat,total1:t1,total2:t2,schreiber:schreiber,time:now()});
@@ -1180,10 +1216,24 @@ function showWinModal(g){
   var lnames=pnames(g.loserIds);
   var diff=Math.max(0,g.loserGoal-g.loserScore);
   var hundreds=Math.floor(diff/100);
+  var t1n=pnames(g.team1.playerIds), t2n=pnames(g.team2.playerIds);
+  var g2goal=(g.modus==='steiger'&&g.goalLarge)?g.goalLarge:g.goal;
   var html='<div style="text-align:center;margin-bottom:1rem">'
     +'<div style="font-size:36px">🎉</div>'
     +'<div style="font-family:var(--fd);font-size:20px;font-weight:600;color:var(--green);margin:.3rem 0">'+wnames+' gewinnt!</div>'
-    +'<div style="font-size:13px;color:var(--ink3)">'+g.rounds.length+' Runden · Ziel '+g.goal+'</div>'
+    +'<div style="font-size:13px;color:var(--ink3)">'+g.rounds.length+' Runden</div>'
+    +'</div>'
+    +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:.75rem">'
+    +'<div style="background:var(--bg2);border-radius:var(--radius-sm);padding:.6rem;text-align:center;'+(g.winner===1?'border:1.5px solid var(--green)':'')+'">'
+    +'<div style="font-size:11px;color:var(--ink3);margin-bottom:2px">'+t1n+'</div>'
+    +'<div style="font-size:22px;font-weight:600;color:'+(g.winner===1?'var(--green)':'var(--ink)')+'">'+g.team1.score+'</div>'
+    +'<div style="font-size:10px;color:var(--ink3)">Ziel '+g.goal+'</div>'
+    +'</div>'
+    +'<div style="background:var(--bg2);border-radius:var(--radius-sm);padding:.6rem;text-align:center;'+(g.winner===2?'border:1.5px solid var(--green)':'')+'">'
+    +'<div style="font-size:11px;color:var(--ink3);margin-bottom:2px">'+t2n+'</div>'
+    +'<div style="font-size:22px;font-weight:600;color:'+(g.winner===2?'var(--green)':'var(--ink)')+'">'+g.team2.score+'</div>'
+    +'<div style="font-size:10px;color:var(--ink3)">Ziel '+g2goal+'</div>'
+    +'</div>'
     +'</div>';
   // Penalty breakdown
   html+='<div class="slabel" style="padding-left:0">Verlust-Abrechnung</div>'
@@ -1322,7 +1372,7 @@ function showSummary(sessId){
   });
   zs.forEach(function(z){ z.verliererIds.forEach(function(id){ if(tally[id]) tally[id].zpen+=z.betrag; }); });
 
-  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.indexOf(p.id)!==-1; });
+  var abwesend=DB.players.filter(function(p){ return sess.playerIds.indexOf(p.id)===-1; });
   var absAmt=0;
   if(done.length){
     var pens=done.slice(0,3).map(function(g){ return g.penalty||0; });
@@ -1468,9 +1518,13 @@ function tagesablZeigen(){
   var sess=getSess(); if(!sess) return;
   var done=sess.games.filter(function(g){ return g.winner; });
   var zs=sess.zusatzspiele||[];
-  var abwesend=DB.players.filter(function(p){ return !sess.playerIds.indexOf(p.id)!==-1; });
+  var abwesend=DB.players.filter(function(p){ return sess.playerIds.indexOf(p.id)===-1; });
   var absAmt=0;
-  if(done.length){ var pens=done.slice(0,3).map(function(g){ return g.penalty||0; }); absAmt=Math.round(pens.reduce(function(a,b){ return a+b; },0)/pens.length); }
+  if(done.length){
+    var first3=done.slice(0,3);
+    var penSum=first3.reduce(function(a,g){ return a+(g.penalty||0); },0);
+    absAmt=Math.ceil(penSum/first3.length);
+  }
 
   var tally={};
   sess.playerIds.forEach(function(id){ tally[id]={wins:0,losses:0,jpen:0,zpen:0}; });
@@ -1504,6 +1558,14 @@ function tagesablZeigen(){
         +'<div style="font-size:15px;font-weight:700;color:var(--amber)">−€'+absAmt+'</div></div>';
     });
   }
+  // Total Kassensumme heute
+  var totalHeute=0;
+  sess.playerIds.forEach(function(id){ var t=tally[id]; if(t) totalHeute+=t.jpen+t.zpen; });
+  if(abwesend.length&&absAmt) totalHeute+=abwesend.length*absAmt;
+  html+='<div style="margin-top:.75rem;background:var(--ink);color:#fff;border-radius:var(--radius-sm);padding:.75rem 1rem;display:flex;justify-content:space-between;align-items:center">'
+    +'<span style="font-size:14px;font-weight:500">Kasse heute gesamt</span>'
+    +'<span style="font-size:20px;font-weight:700">€'+totalHeute+'</span>'
+    +'</div>';
   document.getElementById('tagesabl-content').innerHTML=html;
   openModal('modal-tagesabl');
 }
@@ -1515,8 +1577,9 @@ function tagAbschliessen(){
   var done=sess.games.filter(function(g){ return g.winner; });
   var abwesend=DB.players.filter(function(p){ return !sess.playerIds.indexOf(p.id)!==-1; });
   if(done.length>=1){
-    var pens=done.slice(0,3).map(function(g){ return g.penalty||0; });
-    var absAmt=Math.round(pens.reduce(function(a,b){ return a+b; },0)/pens.length);
+    var first3=done.slice(0,3);
+    var penSum=first3.reduce(function(a,g){ return a+(g.penalty||0); },0);
+    var absAmt=Math.ceil(penSum/first3.length);
     abwesend.forEach(function(p){ p.totalPenalty=(p.totalPenalty||0)+absAmt; });
     sess.absenceAmt=absAmt;
   }
