@@ -220,6 +220,12 @@ textarea{resize:vertical;min-height:60px}
   </nav>
 </div>
 
+<!-- Session Banner (non-blocking, shown instead of auto-opening modal) -->
+<div id="sess-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:90;max-width:480px;margin:0 auto;background:var(--al);border-bottom:1px solid rgba(139,94,0,.25);padding:.55rem 1rem;align-items:center;justify-content:space-between;gap:8px">
+  <span style="font-size:13px;color:var(--amber);font-weight:500">Kein aktiver Abend</span>
+  <button class="btn bsm" style="background:var(--amber);color:#fff;border-color:var(--amber);font-size:12px" onclick="openSessModal()">Abend starten</button>
+</div>
+
 <!-- ═══ MODALS ═══ -->
 
 <!-- Session Setup -->
@@ -229,14 +235,25 @@ textarea{resize:vertical;min-height:60px}
     <div class="mhandle"></div>
     <div class="mtitle">Heutiger Abend</div>
     <div class="field">
-      <label>Wer ist heute dabei?</label>
+      <label>Wer ist heute dabei? <span style="font-size:11px;color:var(--ink3)">(mind. 3)</span></label>
       <div class="chips" id="sess-chips"></div>
+    </div>
+    <div class="field">
+      <label>🎭 Gastjasser (optional)</label>
+      <div style="display:flex;gap:7px;align-items:center;margin-bottom:6px">
+        <input type="text" id="sess-gast" placeholder="Name des Gastes…" style="flex:1">
+        <button class="btn bsm" onclick="addGast()" type="button">+ Add</button>
+      </div>
+      <div id="gast-chips"></div>
     </div>
     <div class="field">
       <label>📍 Location (optional)</label>
       <input type="text" id="sess-location" placeholder="z.B. Bei Martin, Gasthaus Krone…">
     </div>
-    <button class="btn bprim bblk" onclick="sessionStarten()">Abend starten</button>
+    <div style="display:flex;gap:8px">
+      <button class="btn" onclick="closeModal('modal-session');hideSessBanner()" style="flex:1">Abbrechen</button>
+      <button class="btn bprim" onclick="sessionStarten()" style="flex:1">Abend starten</button>
+    </div>
   </div>
 </div>
 
@@ -626,7 +643,18 @@ function requireAct(){
   if(!canAct()){ toast('Nur Abend-Teilnehmer dürfen das!'); return false; } return true;
 }
 function getAG()  { var s=getSess(); return s?((s.games||[]).find(function(g){ return !g.winner; })||null):null; }
-function getP(id) { if(!DB||!DB.players) return null; return DB.players.find(function(p){ return p.id===id; }); }
+function getP(id) {
+  if(!DB||!DB.players) return null;
+  var p=DB.players.find(function(x){ return x.id===id; });
+  if(p) return p;
+  if(DB.sessions){
+    for(var _i=DB.sessions.length-1;_i>=0;_i--){
+      var _gs=DB.sessions[_i].gaeste||[];
+      for(var _j=0;_j<_gs.length;_j++){ if(_gs[_j].id===id) return _gs[_j]; }
+    }
+  }
+  return null;
+}
 function ini(name){ return (name||'?').substring(0,2).toUpperCase(); }
 
 function av(name,color,small){
@@ -753,9 +781,18 @@ function checkPin(){
 // ═══════════════════════════════════════════════════════════════════
 function initApp(){
   if(!DB) return;
-  lastSeenTs = DB._ts || 0; // set baseline so first poll doesn't re-render
+  lastSeenTs = DB._ts || 0;
   renderAll();
-  if(!getSess()&&CU) openSessModal();
+  // Show banner (not modal) if no session today
+  if(!getSess()) showSessBanner();
+}
+function showSessBanner(){
+  var b=document.getElementById('sess-banner');
+  if(b) b.style.display='flex';
+}
+function hideSessBanner(){
+  var b=document.getElementById('sess-banner');
+  if(b) b.style.display='none';
 }
 function nav(s){
   document.querySelectorAll('.screen').forEach(function(x){ x.classList.remove('active'); });
@@ -766,46 +803,84 @@ function nav(s){
 }
 function renderScreen(s){
   try {
-    if(s==='session')    renderSession();
-    else if(s==='spiel') renderSpiel();
+    if(s==='session')         renderSession();
+    else if(s==='spiel')      renderSpiel();
     else if(s==='verlauf')    renderVerlauf();
     else if(s==='statistik')  renderStatistik();
     else if(s==='verwaltung') renderVerwaltung();
     else if(s==='kasse')      renderKasse();
-  } catch(e) { console.error('renderScreen error ('+s+'):', e); }
+  } catch(e){ console.error('renderScreen('+s+'):', e); }
 }
-function safeRender(fn, name) {
-  try { fn(); }
-  catch(e) { console.error('Render error in ' + name + ':', e); }
-}
+function safeRender(fn,name){ try{ fn(); }catch(e){ console.error('Render '+name+':', e); } }
 function renderAll(){
-  safeRender(renderSession,   'renderSession');
-  safeRender(renderSpiel,     'renderSpiel');
-  safeRender(renderVerlauf,   'renderVerlauf');
-  safeRender(renderStatistik, 'renderStatistik');
-  safeRender(renderVerwaltung,'renderVerwaltung');
-  safeRender(renderKasse,     'renderKasse');
+  safeRender(renderSession,   'session');
+  safeRender(renderSpiel,     'spiel');
+  safeRender(renderVerlauf,   'verlauf');
+  safeRender(renderStatistik, 'statistik');
+  safeRender(renderVerwaltung,'verwaltung');
+  safeRender(renderKasse,     'kasse');
 }
 
 // ═══════════════════════════════════════════════════════════════════
-// SESSION MODAL
+// SESSION MODAL + GASTJASSER
 // ═══════════════════════════════════════════════════════════════════
+var gastList = []; // [{id,name,isGast:true}] built during session setup
+
+function addGast(){
+  var inp=document.getElementById('sess-gast');
+  if(!inp) return;
+  var name=inp.value.trim();
+  if(!name){ toast('Bitte Namen eingeben!'); return; }
+  gastList.push({id:'gast_'+pid(), name:name, isGast:true, color:'#8b5e00'});
+  inp.value='';
+  renderGastChips();
+}
+function removeGast(idx){
+  gastList.splice(parseInt(idx),1);
+  renderGastChips();
+}
+function renderGastChips(){
+  var el=document.getElementById('gast-chips'); if(!el) return;
+  if(!gastList.length){ el.innerHTML=''; return; }
+  var h='';
+  for(var i=0;i<gastList.length;i++){
+    h+='<div style="display:inline-flex;align-items:center;gap:4px;background:var(--al);border:1px solid rgba(139,94,0,.3);border-radius:20px;padding:3px 8px;font-size:12px;color:var(--amber)">'
+      +'🎭 '+gastList[i].name
+      +' <span style="cursor:pointer;font-size:15px;line-height:1" onclick="removeGast('+i+')">×</span></div>';
+  }
+  el.innerHTML=h;
+}
+
 function openSessModal(){
+  gastList=[];
   initCG('sess-sel',[]);
   var el=document.getElementById('sess-chips');
   el.dataset.cg='sess-sel';
   el.dataset.pids=DB.players.map(function(p){ return p.id; }).join(',');
   refreshCG('sess-sel');
-  document.getElementById('sess-location').value='';
+  var gastEl=document.getElementById('gast-chips');
+  if(gastEl) gastEl.innerHTML='';
+  var gastInp=document.getElementById('sess-gast');
+  if(gastInp) gastInp.value='';
+  var locEl=document.getElementById('sess-location');
+  if(locEl) locEl.value='';
   openModal('modal-session');
 }
 function sessionStarten(){
   var sel=selCG('sess-sel');
-  if(sel.length<2){ toast('Mindestens 2 Spieler auswählen!'); return; }
+  if(sel.length<3){ toast('Mindestens 3 Spieler für einen Abend!'); return; }
   var loc=document.getElementById('sess-location').value.trim();
-  var sess={id:pid(),date:today(),location:loc,playerIds:sel,games:[],zusatzspiele:[],closed:false};
+  var sess={
+    id:pid(), date:today(), location:loc,
+    playerIds:sel,
+    gaeste: gastList.slice(), // snapshot of guest list
+    games:[], zusatzspiele:[], closed:false
+  };
   DB.sessions.push(sess);
-  save(); closeModal('modal-session'); renderAll();
+  save();
+  closeModal('modal-session');
+  hideSessBanner();
+  renderAll();
   toast('Abend gestartet 🃏');
 }
 
@@ -832,6 +907,7 @@ function renderSession(){
     var p=getP(id); if(p) badges+='<span style="background:rgba(255,255,255,.18);border-radius:20px;padding:2px 9px;font-size:11px;color:#fff">'+p.name+'</span>';
   });
   (sess.gaeste||[]).forEach(function(g){ badges+='<span style="background:rgba(255,255,255,.15);border:1px dashed rgba(255,255,255,.4);border-radius:20px;padding:2px 10px;font-size:12px;color:rgba(255,255,255,.85)">🎭 '+g.name+'</span>'; });
+  (sess.gaeste||[]).forEach(function(g){ badges+='<span style="background:rgba(255,255,255,.12);border:1px dashed rgba(255,255,255,.5);border-radius:20px;padding:2px 10px;font-size:12px;color:rgba(255,255,255,.8)">🎭 '+g.name+'</span>'; });
   document.getElementById('sess-badges').innerHTML=badges;
 
   var done=sess.games.filter(function(g){ return g.winner; });
@@ -934,7 +1010,8 @@ function calcPenalty(loserScore,goal){
 function neuesSpielModal(){
   if(!requireAct()) return;
   var sess=getSess(); if(!sess){ toast('Erst einen Abend starten!'); return; }
-  var avail=sess.playerIds;
+  var gaeste=sess.gaeste||[];
+  var avail=sess.playerIds.concat(gaeste.map(function(g){ return g.id; }));
   initCG('ng-t1',[]); initCG('ng-t2',[]); initCG('ng-stpl',[]);
   initCG('ng-st1',[]); initCG('ng-st2',[]);
 
@@ -1374,6 +1451,7 @@ function showSummary(sessId){
   zs.forEach(function(z){ z.verliererIds.forEach(function(id){ if(tally[id]) tally[id].zpen+=z.betrag; }); });
 
   var abwesend=DB.players.filter(function(p){ return sess.playerIds.indexOf(p.id)===-1; });
+  var gaeste=sess.gaeste||[];
   var absAmt=0;
   if(done.length){
     var pens=done.slice(0,3).map(function(g){ return g.penalty||0; });
@@ -1520,6 +1598,7 @@ function tagesablZeigen(){
   var done=sess.games.filter(function(g){ return g.winner; });
   var zs=sess.zusatzspiele||[];
   var abwesend=DB.players.filter(function(p){ return sess.playerIds.indexOf(p.id)===-1; });
+  var gaeste=sess.gaeste||[];
   var absAmt=0;
   if(done.length){
     var first3=done.slice(0,3);
