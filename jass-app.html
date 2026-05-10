@@ -249,7 +249,7 @@ textarea{resize:vertical;min-height:60px}
     <div class="field">
       <label>Spielmodus</label>
       <select id="ng-modus" onchange="updateModusUI()">
-        <option value="kreuz">Kreuzjass (2 vs 2)</option>
+        <option value="kreuz">Kreuzjass</option>
         <option value="steiger">Steigern (ungerade Anzahl)</option>
       </select>
     </div>
@@ -831,6 +831,7 @@ function renderSession(){
   sess.playerIds.forEach(function(id){
     var p=getP(id); if(p) badges+='<span style="background:rgba(255,255,255,.18);border-radius:20px;padding:2px 9px;font-size:11px;color:#fff">'+p.name+'</span>';
   });
+  (sess.gaeste||[]).forEach(function(g){ badges+='<span style="background:rgba(255,255,255,.15);border:1px dashed rgba(255,255,255,.4);border-radius:20px;padding:2px 10px;font-size:12px;color:rgba(255,255,255,.85)">🎭 '+g.name+'</span>'; });
   document.getElementById('sess-badges').innerHTML=badges;
 
   var done=sess.games.filter(function(g){ return g.winner; });
